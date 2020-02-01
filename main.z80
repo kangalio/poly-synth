@@ -1,0 +1,92 @@
+;~ #include "../_lib/ti83.inc"
+.org 0x9327
+
+; Cycle step index in c. Destroys hl, bc. New cycle pos is in hl.
+; Advances the cycle position stored in ram by the appropiate amount, selected by the cycle step
+; index value passed in c.
+add_cycle_step .macro voice_n
+	; Load cycle step
+	ld hl, CYCLE_SPEEDS
+	ld b, 0
+	add hl, bc
+	add hl, bc
+	ld bc, (hl) ; Can be spread out (load both bytes individually) to save 4 bytes
+	
+	; Add cycle step
+	ld hl, (cycle_pos + 2 * &voice_n)
+	add hl, bc
+	ld (cycle_pos + 2 * &voice_n), hl
+	
+	.endm
+;load_cycle_step
+
+main:
+	di ; Interrupts mess with low-level key input
+	
+loop:
+	ld a, 0b11101111
+	out (1), a
+	in a, (1)
+	xor 255
+	
+	; Go through the key bits and find the set/pressed one. Write to c
+	ld b, a ; Stores key group code
+	ld a, 0 ; Is counted up
+	ld c, 0 ; Saves index
+	ld d, 0
+find_bits:
+	inc a
+	sra b
+	jr nc, skip_set_c ; If bit 0 is set, save index
+	ld c, a
+	jr skip_set_c_2
+skip_set_c:
+	cp 8
+	jr nz, find_bits ; If a is not zero yet, repeat loop
+	; TODO: Reset cycle_pos when no key is pressed to prevent halt on high which silences other voice
+	jr skip_set_c_2
+	
+find_bits_2:
+	inc a
+	sra b
+	jr nc, skip_set_c_2
+	ld d, a
+skip_set_c_2:
+	cp 8
+	jr nz, find_bits_2
+	
+	add_cycle_step 0
+	ld a, h
+	ld c, d
+	add_cycle_step 1
+	
+	; Write audio
+	and SAMPLE_BIT_MASK ; If first voice is high
+	jr z, set_audio_val_high ; Write high
+	ld a, h ; Or second voice is high
+	and SAMPLE_BIT_MASK
+	jr z, set_audio_val_high ; Write high
+	ld a, 0 ; Otherwise write low
+	jr set_audio_val_end
+set_audio_val_high:
+	ld a, 3
+set_audio_val_end:
+	out (0), a
+	
+	jr loop ; TODO: exit condition
+	
+	ei
+	ret
+;main
+
+SAMPLE_BIT_MASK .equ 0b11100000
+
+;;;;;;;;;;;;;;;;;;;
+;; RAM VARIABLES ;;
+;;;;;;;;;;;;;;;;;;;
+cycle_pos:
+	; Voices initial values mustn't be zero because then they'll be high and thus silencing
+	.dw 0xFFFF ; First voice
+	.dw 0xFFFF ; Second voice
+CYCLE_SPEEDS:
+	.dw 0, 1239, 1391, 1474, 1654, 1857, 1968, 2208, 2479, 2782, 2948
