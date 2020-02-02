@@ -3,6 +3,7 @@
 
 ; This is a little pulse wave synthesizer.
 ; Currently monophonic, but extensible to polyphonic theoratically
+; With one voice it achieves a sample rate of ~24972 Hz!
 
 ; Reads the keys pressed. Returns the last pressed key in the key group.
 ; Takes key code in b. Destroys a, b, c. Key index is in &key_reg
@@ -47,6 +48,10 @@ add_cycle_step .macro key_reg, voice_n
 	; Add cycle step
 	ld hl, (cycle_pos + 2 * &voice_n)
 	add hl, bc
+	inc c
+	dec c
+	jr nz, cycle_step_load_&voice_n
+	ld hl, 0xFFFF
 cycle_step_load_&voice_n:
 	ld (cycle_pos + 2 * &voice_n), hl
 	
@@ -54,7 +59,7 @@ cycle_step_load_&voice_n:
 ;load_cycle_step
 
 ; Writes audio sample on to link port.
-; Takes audio sample in a. Destroys a. Returns nothing
+; Takes audio samples in a and a'. Destroys a. Returns nothing
 write_audio .macro
 	; If first voice is high, write high
 	and SAMPLE_BIT_MASK
@@ -111,14 +116,6 @@ sample_loop:
 	ei
 	ret
 ;main
-
-;~ add_cycle_step_fn:
-	;~ add_cycle_step
-	;~ ret
-
-;~ write_audio_fn:
-	;~ write_audio
-	;~ ret
 
 SAMPLE_BIT_MASK .equ 0b11100000
 
