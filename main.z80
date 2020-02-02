@@ -5,39 +5,37 @@
 ; Currently monophonic, but extensible to polyphonic theoratically
 
 ; Reads the keys pressed. Returns the last pressed key in the key group.
-; No params. Destroys a, b, c. Key index is in &key_reg
-get_key_pressed .macro key_reg
-	; Get keys pressed ()
-	ld a, 0b11101111
-	out (1), a
-	in a, (1)
-	xor 255 ; negate so that 1=pressed and 0=not pressed, instead of the other way around
-	
+; Takes key code in b. Destroys a, b, c. Key index is in &key_reg
+get_key_pressed .macro key_reg, next_key_reg
 	; Go through the key bits and find the set/pressed one. Write to &key_reg
-	ld b, a ; Stores key group code
-	ld a, 0 ; Is counted up per bit
-	ld &key_reg, 0 ; Saves index
-find_bits:
+find_bits_&key_reg:
 	inc a
 	sra b
-	jr nc, skip_set_c ; If bit 0 is set, save index
+	jr nc, skip_set_&key_reg ; If bit 0 is set, save index
 	ld &key_reg, a
-skip_set_c:
+	
+	if "&key_reg" != "&next_key_reg"
+	jr skip_set_&next_key_reg
+	endif
+	
+skip_set_&key_reg:
 	cp 8
-	jp nz, find_bits ; If a is not zero yet, repeat loop
+	jp nz, find_bits_&key_reg ; If a is not zero yet, repeat loop
 	; TODO: Reset cycle_pos when no key is pressed to prevent halt on high which silences other voice
+	
+	if "&key_reg" != "&next_key_reg"
+	jr skip_set_&next_key_reg
+	endif
 	
 	.endm
 ;get_key_pressed
 
 ; Advances the cycle position stored in ram by the appropiate amount, selected by the cycle step
 ; index value passed.
-; Cycle step index in &key_reg. Destroys hl, bc. New cycle pos is in hl.
-add_cycle_step .macro key_reg
+; Cycle step index register in &key_reg (not c!). Destroys hl, bc. New cycle pos is in hl.
+add_cycle_step .macro key_reg, voice_n
 	; Ensure that key index value is in c (we need it there)
-	if '&key_reg' != 'c'
 	ld c, &key_reg
-	endif
 
 	; Load cycle step
 	ld hl, CYCLE_SPEEDS
@@ -47,9 +45,10 @@ add_cycle_step .macro key_reg
 	ld bc, (hl) ; Can be spread out (load both bytes individually) to save 4 bytes
 	
 	; Add cycle step
-	ld hl, (cycle_pos)
+	ld hl, (cycle_pos + 2 * &voice_n)
 	add hl, bc
-	ld (cycle_pos), hl
+cycle_step_load_&voice_n:
+	ld (cycle_pos + 2 * &voice_n), hl
 	
 	.endm
 ;load_cycle_step
@@ -57,10 +56,16 @@ add_cycle_step .macro key_reg
 ; Writes audio sample on to link port.
 ; Takes audio sample in a. Destroys a. Returns nothing
 write_audio .macro
-	; Write audio
-	and SAMPLE_BIT_MASK ; If voice is high
-	jp z, set_audio_val_high ; Write high
-	ld a, 0 ; Otherwise write low
+	; If first voice is high, write high
+	and SAMPLE_BIT_MASK
+	jp z, set_audio_val_high
+	
+	; or if second voice is high, write high
+	ld a, h
+	and SAMPLE_BIT_MASK
+	jp z, set_audio_val_high
+	
+	xor a ; Otherwise write low
 	jp set_audio_val_end
 set_audio_val_high:
 	ld a, 3
@@ -74,17 +79,27 @@ main:
 	di ; Interrupts mess with low-level key input
 	
 main_loop:
-	get_key_pressed c
+	; Get keys pressed
+	ld a, 0b11101111
+	out (1), a
+	in a, (1)
+	xor 255 ; negate so that 1=pressed and 0=not pressed, instead of the other way around
+	ld b, a ; Stores key group code
+	
+	; The a zeroing has to be executed before a get_key_pressed chain
+	xor a ; a is counted up per bit
+	ld de, 0
+	get_key_pressed d, e
+	get_key_pressed e, e
 
 	exx
 	ld b, 255
 sample_loop:
 	exx
 	
-	ld e, c
-	add_cycle_step c
-	ld c, e
+	add_cycle_step d, 0
 	ld a, h
+	add_cycle_step e, 1
 	write_audio
 	
 	exx
@@ -111,7 +126,8 @@ SAMPLE_BIT_MASK .equ 0b11100000
 ;; RAM VARIABLES ;;
 ;;;;;;;;;;;;;;;;;;;
 cycle_pos:
-	; Voices initial values mustn't be zero because then they'll be high and thus silencing
+	; Voices' initial values mustn't be zero because then they'll be high and thus silencing
+	.dw 0xFFFF
 	.dw 0xFFFF
 CYCLE_SPEEDS:
 	.dw 0
